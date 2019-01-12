@@ -15,6 +15,7 @@ char map[SIZE_Y][SIZE_X] = {0};
 
 bool debug = false;
 bool fullyFinished = true;
+bool atLeastOneElfDead = false;
 
 using uint = unsigned int;
 using Point = std::pair<uint, uint>;
@@ -88,7 +89,7 @@ public:
         return false;
     }
     
-    static const uint8_t attackPower = 3;
+    int attackPower = 3;
 private:
     int hp = 200;
     
@@ -200,7 +201,7 @@ void setAllAdjacentCells()
     }
 }
 
-void readMap(const std::string& file)
+void readMap(const std::string& file, int attackPower)
 {
     std::ifstream myFile(file);
     
@@ -218,6 +219,7 @@ void readMap(const std::string& file)
             {
                 //std::cout << "Elf at " << j << ":" << i << '\n';
                 auto elf = std::make_unique<Unit>(Unit::Type::Elf, j, i);
+                elf->attackPower = attackPower;
                 //elf->setAdjacentCells(getAdjacentFreeCells(j, i));
                 
                 units.insert(units.end(), std::move(elf));
@@ -227,6 +229,7 @@ void readMap(const std::string& file)
             {
                 //std::cout << "Goblin at " << j << ":" << i << '\n';
                 auto goblin = std::make_unique<Unit>(Unit::Type::Goblin, j, i);
+                goblin->attackPower = 3;
                 //goblin->setAdjacentCells(getAdjacentFreeCells(j, i));
                 
                 units.insert(units.end(), std::move(goblin));
@@ -285,14 +288,17 @@ bool lessThan(Point lhs, Point rhs)
     //std::cout << "comparing\n";
     if(lhs.second < rhs.second)
     {
+        //std::cout << "T\n";
         return true;
     }
     else if(lhs.second == rhs.second && lhs.first < rhs.first)
     {
+        //std::cout << "T\n";
         return true;
     }
     else
     {
+        //std::cout << "F\n";
         return false;
     }
 }
@@ -570,11 +576,11 @@ std::pair<bool, Point> findTargetWithLeastHp(uint x, uint y, Unit::Type type)
     return {foundOne, currentMinHpPoint};    
 }
 
-void checkIfStepIsBest(Point& bestStepToMinCost, Point& bestTarget, int& minCost, bool& foundPossiblePath, Point p)
+void checkIfStepIsBest(Point& bestStepToMinCost, Point& bestTarget, Point dstPoint, int& minCost, bool& foundPossiblePath, Point p)
 {
     if(map[p.second][p.first] == '.')
     {
-        //std::cout << "Here we are: " << p.first<< "," << p.second << "\n";
+        //std::cout << "Here we aree: " << p.first<< "," << p.second << "\n";
         auto it = std::find_if (calculatedNodes.begin(), calculatedNodes.end(), [p](const Node& n){
                         return (n.x == p.first && n.y == p.second);});
         
@@ -585,26 +591,43 @@ void checkIfStepIsBest(Point& bestStepToMinCost, Point& bestTarget, int& minCost
             if(it->cost > 0)
             {
                 if(it->cost < minCost ||
-                  (it->cost == minCost && lessThan(Point{it->x, it->y}, bestTarget)))
+                  (it->cost == minCost && lessThan(dstPoint, bestTarget)))
                 {
                     if(map[it->y][it->x] == '.')
                     {
                         minCost = it->cost;
                         bestStepToMinCost = {p.first, p.second};
-                        bestTarget = {it->x, it->y};
+                        bestTarget = dstPoint;
+                        
+                        //std::cout << "New best target " << bestTarget.first << "," << bestTarget.second << '\n';
+                        //std::cout << "best step  to min" << bestStepToMinCost.first << "," << bestStepToMinCost.second << '\n';
                         
                         foundPossiblePath = true;
                     }
                 }
             }
-        }                
+        }
     }
 }
 
 void moveUnits()
 {
+    
+    //std::cout << "I think we can't remove items while iterating over collection\n";
+    //std::cout << "Better way would be to remove all units with hp <= 0 after the loop and not count such units as a potential target\n";
+    
+    Point lastDead = {0,0};
+    
     for(auto& u : units)
     {
+        //std::cout << "Units size now: " << units.size() << '\n';
+        if(u->x == lastDead.first && u->y == lastDead.second)
+        {
+            std::cout << "Serious error!\n";
+            //exit(1);
+        }
+        
+        
         calculatedNodes.clear();
         waitingForVisit.clear();
         
@@ -626,7 +649,7 @@ void moveUnits()
         {
             auto targetX = targetBefore.second.first;
             auto targetY = targetBefore.second.second;
-            //std::cout << "Found valid target! Attacking: " << targetX << "," << targetY << '\n';
+            std::cout << "Found valid target! Attacking: " << targetX << "," << targetY << '\n';
             
             auto target = std::find_if(units.begin(), units.end(), [targetX, targetY](auto& u) {
                 //std::cout << "7";
@@ -640,7 +663,13 @@ void moveUnits()
             {
                 if((*target)->attack(u->attackPower))
                 {
+                    if((*target)->getMark() == 'E')
+                    {
+                        atLeastOneElfDead = true;
+                    }
+                    lastDead = {(*target)->x, (*target)->y};
                     units.erase(target);
+                    
                 }
             }
             //std::cout << "Continuing without calculating the path calculation\n";
@@ -698,11 +727,12 @@ void moveUnits()
                             //std::cout << "Calculated nodes size: " << calculatedNodes.size() << "\n";
                         }
                     //}
+                    Point dstPoint = {src.x, src.y};
                         
-                    checkIfStepIsBest(bestStepToMinCost, bestTarget, minCost, foundPossiblePath, {u->x, u->y-1});
-                    checkIfStepIsBest(bestStepToMinCost, bestTarget, minCost, foundPossiblePath, {u->x -1, u->y});
-                    checkIfStepIsBest(bestStepToMinCost, bestTarget, minCost, foundPossiblePath, {u->x +1, u->y});
-                    checkIfStepIsBest(bestStepToMinCost, bestTarget, minCost, foundPossiblePath, {u->x, u->y + 1});
+                    checkIfStepIsBest(bestStepToMinCost, bestTarget, dstPoint, minCost, foundPossiblePath, {u->x, u->y-1});
+                    checkIfStepIsBest(bestStepToMinCost, bestTarget, dstPoint, minCost, foundPossiblePath, {u->x -1, u->y});
+                    checkIfStepIsBest(bestStepToMinCost, bestTarget, dstPoint, minCost, foundPossiblePath, {u->x +1, u->y});
+                    checkIfStepIsBest(bestStepToMinCost, bestTarget, dstPoint, minCost, foundPossiblePath, {u->x, u->y + 1});
                     
                     //std::cout << "Best step can be taken to: " << bestStepToMinCost.first << "," << bestStepToMinCost.second << '\n';
                 }
@@ -811,6 +841,11 @@ void moveUnits()
             {
                 if((*target)->attack(u->attackPower))
                 {
+                    if((*target)->getMark() == 'E')
+                    {
+                        atLeastOneElfDead = true;
+                    }
+                    lastDead = {(*target)->x, (*target)->y};
                     units.erase(target);
                 }
             }
@@ -857,32 +892,49 @@ bool battleEnded()
 
 int main()
 {
-    readMap("test");
-    std::cout << "Initially\n";
-    displayMapWithUnits();
-
-    for(int i = 1; !battleEnded(); ++i)
+    char winningTeam = 'G';
+    int attackPower = 12;
+    
+    while(winningTeam != 'E')
     {
-        //if(i == 3) debug = true;
-        //else debug = false;
+        ++attackPower;
+        atLeastOneElfDead = false;
+        units.clear();
+        fullyFinished = true;
         
-        units.sort(compareDereferenced);     
-
-        moveUnits();
-
-        std::cout << "After round: " << i << '\n';
+        readMap("test", attackPower);
+        std::cout << "Initially\n";
         displayMapWithUnits();
-        
-        if(battleEnded())
+    
+        for(int i = 1; !battleEnded(); ++i)
         {
-            if(!fullyFinished)
+            //if(i == 3) debug = true;
+            //else debug = false;
+            
+            units.sort(compareDereferenced);     
+
+            moveUnits();
+
+            std::cout << "After round: " << i << '\n';
+            displayMapWithUnits();
+            
+            if(atLeastOneElfDead)
             {
-                --i;
+                break;
             }
-            std::cout << "battle outcome: " << battleOutcome(i) << '\n';
+            
+            if(battleEnded())
+            {
+                if(!fullyFinished)
+                {
+                    --i;
+                }
+                std::cout << "battle outcome: " << battleOutcome(i) << '\n';
+                winningTeam =  (*units.begin())->getMark();
+                
+                //std::cout << "The winning team: " << winningTeam << "\n";
+                std::cout << "Attack power " << attackPower << '\n';
+            }
         }
-    } 
-    
-    
-    std::map<std::pair<uint, uint>, int> distances;
+    }
 }
